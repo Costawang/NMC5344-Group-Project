@@ -81,15 +81,5 @@ trend_comparison
 ```{r trend-regression}
 model_data <- transform(annual_without_egypt, time = year - 2020)
 trend_model <- lm(total ~ time, data = model_data)
-model_summary <- summary(trend_model)
-year_coefficient <- model_summary$coefficients["time", ]
-
-knitr::kable(data.frame(
-  Observations = nobs(trend_model),
-  `Annual change (people)` = year_coefficient[["Estimate"]],
-  `R²` = model_summary$r.squared,
-  `Adjusted R²` = model_summary$adj.r.squared,
-  `p value` = year_coefficient[["Pr(>|t|)"]],
-  check.names = FALSE
-), digits = c(0, 1, 3, 3, 6))
+summary(trend_model)
 ```
