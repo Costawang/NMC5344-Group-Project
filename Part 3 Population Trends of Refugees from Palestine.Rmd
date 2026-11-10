@@ -1,0 +1,95 @@
+---
+title: "Part 3 Population Trends of Refugees from Palestine"
+output:
+  html_document: default
+  pdf_document: default
+params:
+  data_file: "persons_of_concern_demographics.csv"
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+```
+
+```{r annual-totals}
+demographics <- read.csv(params$data_file, check.names = FALSE)
+palestine <- subset(
+  demographics, `Country of Origin ISO` == "PSE" & Year %in% 2020:2025,
+  select = c("Year", "Country of Asylum ISO", "Total")
+)
+names(palestine) <- c("year", "asylum_iso", "total")
+stopifnot(!anyNA(palestine), !anyDuplicated(palestine[c("year", "asylum_iso")]))
+
+annual <- aggregate(total ~ year, palestine, sum)
+annual_without_egypt <- aggregate(total ~ year, subset(palestine, asylum_iso != "EGY"), sum)
+stopifnot(identical(annual$year, 2020:2025),
+          identical(annual_without_egypt$year, 2020:2025))
+
+ink <- "#172E35"
+teal <- "#007C78"
+orange <- "#A85222"
+muted <- "#4C6269"
+```
+
+## Annual Population Trends
+
+```{r population-trends, fig.width=9.5, fig.height=5.7, dpi=240}
+series_labels <- c(
+  "Total across all reported places of asylum",
+  "Total excluding Egypt as a place of asylum (both lines overlap in 2023–2025)"
+)
+comparison <- rbind(
+  transform(annual, series = series_labels[1]),
+  transform(annual_without_egypt, series = series_labels[2])
+)
+comparison$series <- factor(comparison$series, levels = series_labels)
+comparison_points <- unique(comparison[c("year", "total")])
+
+trend_comparison <- ggplot(comparison, aes(year, total)) +
+  geom_line(aes(color = series, linetype = series), linewidth = 1.3) +
+  geom_point(data = comparison_points, size = 3.15, shape = 21,
+             stroke = 0.9, color = ink, fill = "white") +
+  geom_text(data = comparison_points,
+            aes(label = scales::comma(total), vjust = ifelse(year == 2023, 2.15, -1.15)),
+            size = 3.85, color = ink, fontface = "bold") +
+  scale_color_manual(name = NULL, values = setNames(c(teal, orange), series_labels)) +
+  scale_linetype_manual(name = NULL, values = setNames(c("solid", "longdash"), series_labels)) +
+  scale_x_continuous(breaks = annual$year, expand = expansion(add = 0.32)) +
+  scale_y_continuous(breaks = seq(0, 125000, 25000), labels = scales::comma,
+                     limits = c(0, 138000), expand = expansion(mult = 0)) +
+  labs(title = "Population Trends of Refugees from Palestine (2020–2025)",
+       x = NULL, y = "Number of refugees") +
+  theme_minimal(base_size = 13) +
+  theme(plot.background = element_rect(fill = "white", color = NA),
+        plot.title.position = "plot",
+        plot.title = element_text(size = 20, face = "bold", color = ink, margin = margin(b = 6)),
+        panel.grid.major.y = element_line(color = "#DBE5E7", linewidth = 0.45),
+        panel.grid.major.x = element_blank(), panel.grid.minor = element_blank(),
+        axis.text = element_text(color = muted),
+        axis.text.x = element_text(margin = margin(t = 8)),
+        axis.title.y = element_text(color = ink, margin = margin(r = 11)),
+        plot.margin = margin(22, 26, 20, 22),
+        legend.position = "bottom", legend.direction = "vertical", legend.justification = "left",
+        legend.key.width = grid::unit(64, "pt"), legend.key.height = grid::unit(17, "pt"),
+        legend.text = element_text(size = 11, color = ink))
+
+trend_comparison
+```
+
+## Linear Regression Excluding Egypt
+
+```{r trend-regression}
+model_data <- transform(annual_without_egypt, time = year - 2020)
+trend_model <- lm(total ~ time, data = model_data)
+model_summary <- summary(trend_model)
+year_coefficient <- model_summary$coefficients["time", ]
+
+knitr::kable(data.frame(
+  Observations = nobs(trend_model),
+  `Annual change (people)` = year_coefficient[["Estimate"]],
+  `R²` = model_summary$r.squared,
+  `Adjusted R²` = model_summary$adj.r.squared,
+  `p value` = year_coefficient[["Pr(>|t|)"]],
+  check.names = FALSE
+), digits = c(0, 1, 3, 3, 6))
+```
