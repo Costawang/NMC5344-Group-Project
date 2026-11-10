@@ -1,0 +1,212 @@
+---
+title: "Part 2 Demographic Analysis of Refugees from Palestine"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+
+library(tidyverse)
+library(ggplot2)
+refugee2025 <- read.csv("persons_of_concern_demographics.csv")
+
+```
+
+```{r}
+
+palestine <- refugee2025 %>%
+  filter(Country.of.Origin == "State of Palestine")
+
+```
+
+```{r} 
+
+#annual population overview
+
+annual_population <- palestine %>%
+  group_by(Year) %>%
+  summarise(
+    Total_Population = sum(Total, na.rm = TRUE)
+  )
+
+ggplot(annual_population,
+       aes(x = Year, y = Total_Population)) +
+  geom_line() +
+  geom_point(size = 3) +
+  labs(
+    title = "Palestinian Refugee Population (2020–2025)",
+    x = "Year",
+    y = "Total Population"
+  ) +
+  theme_minimal()
+
+
+
+```
+
+```{r}
+
+# gender pyramid analysis
+
+age_gender <- palestine %>%
+  filter(Year == 2025) %>%
+  summarise(
+    Female_0_4 = sum(Female.0...4, na.rm = TRUE),
+    Male_0_4 = sum(Male.0...4, na.rm = TRUE),
+    Female_5_11 = sum(Female.5...11, na.rm = TRUE),
+    Male_5_11 = sum(Male.5...11, na.rm = TRUE),
+    Female_12_17 = sum(Female.12...17, na.rm = TRUE),
+    Male_12_17 = sum(Male.12...17, na.rm = TRUE),
+    Female_18_59 = sum(Female.18...59, na.rm = TRUE),
+    Male_18_59 = sum(Male.18...59, na.rm = TRUE),
+    Female_60_plus = sum(Female.60., Female.Other, na.rm = TRUE),
+    Male_60_plus = sum(Male.60., Male.Other, na.rm = TRUE)
+  ) %>%
+  pivot_longer(
+    everything(),
+    names_to = c("Gender", "Age_Group"),
+    names_pattern = "(Female|Male)_(.*)",
+    values_to = "Population"
+  ) %>%
+  mutate(
+    Population = if_else(
+      Gender == "Female",
+      -Population,
+      Population
+    ),
+    Age_Group = factor(
+      Age_Group,
+      levels = c(
+        "0_4", "5_11", "12_17",
+        "18_59", "60_plus"
+      )
+    )
+  )
+
+ggplot(age_gender,
+       aes(x = Population,
+           y = Age_Group,
+           fill = Gender)) +
+  geom_col() +
+  scale_x_continuous(
+    labels = function(x) abs(x)
+  ) +
+  labs(
+    title = "Age and Gender Structure of Palestinian Refugees (2025)",
+    x = "Population",
+    y = "Age Group",
+    fill = "Gender"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+
+# geographical distribution map
+
+library(tidyverse)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(viridis)
+
+geo_2025 <- palestine %>%
+  filter(Year == 2025) %>%
+  group_by(Country.of.Asylum.ISO) %>%
+  summarise(
+    Population = sum(Total, na.rm = TRUE)
+  )
+world <- ne_countries(
+  scale = "medium",
+  returnclass = "sf"
+)
+
+world_data <- world %>%
+  left_join(
+    geo_2025,
+    by = c("iso_a3" = "Country.of.Asylum.ISO")
+  )
+
+ggplot(world_data) +
+  geom_sf(aes(fill = Population),
+          color = "white",
+          linewidth = 0.1) +
+  scale_fill_viridis_c(
+    option = "magma",
+    direction = -1,  # Reverse the colour gradient
+    trans = "sqrt",
+    na.value = "grey90",
+    labels = scales::comma
+  ) +
+  labs(
+    title = "Geographical Distribution of Palestinian Refugees (2025)",
+    fill = "Population",
+    caption = "Source: UNHCR demographic dataset"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+# top10 hosting countries
+
+top_countries <- geo_2025 %>%
+  left_join(
+    palestine %>%
+      distinct(Country.of.Asylum.ISO,
+               Country.of.Asylum),
+    by = "Country.of.Asylum.ISO"
+  ) %>%
+  arrange(desc(Population)) %>%
+  slice_head(n = 10)
+
+ggplot(top_countries,
+       aes(x = reorder(Country.of.Asylum, Population),
+           y = Population)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Top 10 Countries Hosting Palestinian Refugees (2025)",
+    x = "Country of Asylum",
+    y = "Recorded Population"
+  ) +
+  theme_minimal()
+
+```
+```{r}
+# Model building and research
+# Question: How do the recorded numbers of Palestinian refugees vary over time and across different countries of asylum between 2020 and 2025?
+
+library(tidyverse)
+library(glmmTMB)
+library(emmeans)
+
+palestine_model <- palestine %>%
+  mutate(
+    Year = factor(Year),
+    Country = factor(Country.of.Asylum.ISO)
+  ) %>%
+  filter(
+    !is.na(Total),
+    !is.na(Country)
+  )
+
+
+model_nb <- glmmTMB(
+  Total ~ Year + (1 | Country),
+  family = nbinom2(link = "log"),
+  data = palestine_model
+)
+summary(model_nb)
+
+```
+
+```{r}
+# Analysis of the Visualizations
+```
+From a demographic perspective, we have categorized refugees in the Palestinian territories by age: those aged 0–17 are classified as children; those aged 18–59 are classified as young and middle-aged adults of working and childbearing age; and those aged 60 and older are classified as the elderly.
+Overall, the number of male refugees exceeds that of female refugees in all age groups: Among children, the number of males slightly exceeds that of females, which is consistent with Palestine’s own gender ratio of nearly 1:1; however, in the working-age and childbearing-age groups, the number of males is nearly three times that of females. This may be due, in part, to conservative local attitudes that encourage men to work outside the home while expecting women to stay at home, and, in part, to a shortage of male unskilled labor in neighboring European countries, which has led to policy preferences in favor of accepting these male refugees.
+
+
