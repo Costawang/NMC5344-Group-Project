@@ -83,3 +83,11 @@ model_data <- transform(annual_without_egypt, time = year - 2020)
 trend_model <- lm(total ~ time, data = model_data)
 summary(trend_model)
 ```
+
+## Analysis of the Visualizations
+
+The total number of Palestinian refugees in the dataset fell sharply from 2022 to 2023. The dataset recorded about 70,000 Palestinian refugees in Egypt each year from 2020 to 2022, but contained no corresponding figures for Egypt from 2023 to 2025. UNHCR (2024) reported that the estimated number of Palestinian refugees under its mandate in Egypt had been revised downward. To show how the absence of Egypt’s figures affected the recorded trend, the chart compares two series of annual totals. One includes all places of asylum in each year, and the other excludes Egypt from each year’s total.
+
+The two lines moved in opposite directions from 2022 to 2023. Across all places of asylum, the total fell from 118,158 to 56,330, a decrease of 52.3%. With Egypt excluded from both years, the total rose from 48,138 to 56,330, an increase of 17.0%. This comparison shows that the overall decline masked an increase in the combined refugee count across the other places of asylum.
+
+With Egypt excluded, the recorded total rose every year from 2020 to 2025. It increased from 43,556 to 69,026, a rise of 58.5% over the period.
