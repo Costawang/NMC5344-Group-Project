@@ -1,0 +1,413 @@
+---
+title: "Palestinian-origin Persons of Concern in Global Receiving Countries"
+subtitle: "Demography, distribution and host-country associations, 2020–2025"
+author: "Authors: Wang Xinyang, Li Yunrui, Wu Xia, Sun Yinan, Dong Jing"
+date: "12 November 2026"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: false
+    fig_caption: true
+  html_document:
+    self_contained: true
+    toc: false
+fontsize: 11pt
+geometry: margin=0.8in
+header-includes:
+  - \usepackage{float}
+  - \usepackage{booktabs}
+  - \usepackage{longtable}
+  - \usepackage{etoolbox}
+  - \BeforeBeginEnvironment{Shaded}{\par\noindent\begin{minipage}{\linewidth}}
+  - \AfterEndEnvironment{Shaded}{\end{minipage}\par}
+params:
+  data_file: "data/persons_of_concern_demographics.csv"
+  gdp_file: "data/gdp_pc_2025.csv"
+  population_file: "data/host_population_2025.csv"
+---
+
+```{r setup, include=FALSE}
+# Install dependencies once outside knitting if necessary:
+# install.packages(c("rmarkdown", "knitr", "dplyr", "tidyr", "ggplot2",
+#   "scales", "patchwork", "glmmTMB", "sf", "rnaturalearthdata"))
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(sf)
+knitr::opts_chunk$set(echo=FALSE, message=FALSE, warning=FALSE,
+  fig.align="center", fig.pos="H", out.width="100%", dpi=200)
+theme_set(theme_minimal(base_size=11) + theme(
+  panel.grid.minor=element_blank(), plot.title=element_text(face="bold"),
+  legend.position="bottom"))
+tab <- function(x, caption, digits=2) {
+  if (knitr::is_latex_output()) {
+    knitr::kable(x,format="latex",digits=digits,caption=caption,
+      booktabs=TRUE,longtable=FALSE,position="H",row.names=FALSE,
+      label=gsub("[^a-z0-9]+","-",tolower(caption)),
+      format.args=list(big.mark=","))
+  } else {
+    knitr::kable(x,format="html",digits=digits,caption=caption,
+      row.names=FALSE,format.args=list(big.mark=","))
+  }
+}
+```
+
+<!-- BODY_START -->
+
+## 1. Motivation and research questions
+
+Palestinian displacement combines prolonged exile with renewed insecurity. Research on secondary displacement from Syria shows how repeated flight exposes gaps in international protection (Erakat, 2014). Gaza's humanitarian emergency makes accurate interpretation particularly important: OCHA reported approximately 1.9 million internally displaced people in December 2024 (United Nations Office for the Coordination of Humanitarian Affairs [OCHA], 2024). This crisis connects urgent needs in Gaza with longer-term protection concerns across receiving countries.
+
+We examine global receiving countries during 2020–2025, asking how recorded persons of concern are distributed, how Palestinian-origin demographics and totals change, and whether host-country income and population correlate with their recorded numbers. The global overview provides context; the substantive models concern Palestinian origin only.
+
+## 2. Dataset description
+
+The supplied UNHCR demographic extract contains 35,480 observations and 20 variables (United Nations High Commissioner for Refugees [UNHCR], n.d.). Each row represents an origin–asylum–year combination. Year is integer; four country-name and ISO-code fields are character; fifteen population fields are integer counts, including age-by-sex categories, sex totals and Total. There are no missing cells or duplicate keys, but country-year coverage is uneven. Unreported country-years are treated as unavailable.
+
+The extract reports persons of concern without separate population-type labels. Its accompanying Palestine footnotes specify UNHCR coverage. UNRWA operates separately in Jordan, Lebanon, Syria, Gaza and the West Bank (United Nations Relief and Works Agency for Palestine Refugees in the Near East [UNRWA], n.d.). Global country totals may also include domestic displacement.
+
+The Palestinian subset contains 469 records across 93 receiving countries; 81 appear in 2025. World Bank GDP per capita in current US dollars and total population were retrieved for 2025 (World Bank, n.d.-a, n.d.-b). Each saved indicator table has 266 rows, including aggregates, and four variables: character ISO/name, integer year and numeric value. ISO matching retains 77 countries. Cuba, Lebanon, United Arab Emirates and Yemen lack GDP observations. Population is a numeric count; GDP is continuous. Matching selects individual countries.
+
+```{r data-preparation, echo=TRUE}
+# Shared data for the four group contributions
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(sf)
+
+d <- read.csv(params$data_file, check.names = FALSE)
+keys <- c("Year", "Country of Asylum ISO", "Country of Origin ISO")
+stopifnot(nrow(d) == 35480L, ncol(d) == 20L,
+          !anyNA(d), !anyDuplicated(d[keys]))
+pal <- d %>% filter(`Country of Origin ISO` == "PSE")
+pal25 <- pal %>%
+  filter(Year == 2025) %>%
+  transmute(country = `Country of Asylum`,
+            iso3 = `Country of Asylum ISO`, total = Total)
+country_year <- d %>%
+  group_by(Year, `Country of Asylum ISO`) %>%
+  summarise(Total = sum(Total), .groups = "drop")
+
+# Part 4: use the saved World Bank 2025 indicator snapshots.
+gdp <- read.csv(params$gdp_file)
+pop <- read.csv(params$population_file)
+stopifnot(!anyDuplicated(gdp$iso3[nzchar(gdp$iso3)]),
+          !anyDuplicated(pop$iso3[nzchar(pop$iso3)]),
+          all(gdp$year == 2025), all(pop$year == 2025))
+merged <- pal25 %>%
+  left_join(select(filter(gdp, nzchar(iso3)), iso3, gdp_pc),
+            by = "iso3") %>%
+  left_join(select(filter(pop, nzchar(iso3)),
+                   iso3, host_population), by = "iso3")
+excluded <- merged %>%
+  filter(is.na(gdp_pc) | is.na(host_population))
+analysis25 <- merged %>%
+  filter(complete.cases(total, gdp_pc, host_population),
+         gdp_pc > 0, host_population > 0)
+stopifnot(nrow(pal) == 469L,
+          n_distinct(pal$`Country of Asylum ISO`) == 93L,
+          nrow(pal25) == 81L, nrow(analysis25) == 77L)
+```
+
+```{r dataset-audit}
+tab(data.frame(Dataset=c("UNHCR extract","Palestinian subset",
+  "World Bank GDP table","World Bank population table","Model 2 sample"),
+  Rows=c(nrow(d),nrow(pal),nrow(gdp),nrow(pop),nrow(analysis25)),
+  Variables=c(ncol(d),ncol(pal),ncol(gdp),ncol(pop),ncol(analysis25))),
+  "Dataset dimensions")
+tab(excluded %>% select(country,gdp_pc,host_population),
+  "Countries excluded from Model 2 (NA means unavailable)")
+```
+
+## 3. Quantitative summary
+
+Across all original records, Total has mean 21,026.37, median 37, standard deviation 340,175.19, minimum 5 and maximum 23,880,052. Corresponding Palestinian statistics are 1,137.64, 46, 5,857.46, 5 and 70,022. Means greatly exceed medians, demonstrating strong right skew. Tables additionally summarise yearly subgroups, country-level totals and model covariates. Annual comparisons follow changing population stocks.
+
+The Palestinian median increases from 32 in 2020 to 64 in 2025, while its mean decreases from 1,437.70 to 852.17. This divergence shows why a single average is insufficient: changes in the largest records can dominate the mean even when the typical reported country has a higher count.
+
+```{r quantitative-summary, echo=TRUE}
+summarise_counts <- function(x) {
+  x %>% summarise(N=n(), Mean=mean(Total),
+    Median=median(Total), SD=sd(Total),
+    Minimum=min(Total), Maximum=max(Total), .groups="drop")
+}
+whole_summary <- bind_rows(
+  summarise_counts(d) %>% mutate(Scope="All origins"),
+  summarise_counts(pal) %>% mutate(Scope="Palestinian origin")
+) %>% select(Scope,everything())
+year_summary <- bind_rows(
+  summarise_counts(group_by(d,Year)) %>% mutate(Scope="All origins"),
+  summarise_counts(group_by(pal,Year)) %>% mutate(Scope="Palestinian")
+) %>% mutate(Year=as.character(Year)) %>% select(Scope,Year,everything())
+host_summary <- summarise_counts(group_by(country_year,Year)) %>%
+  mutate(Year=as.character(Year))
+covariate_summary <- analysis25 %>%
+  select(total,gdp_pc,host_population) %>%
+  pivot_longer(everything(),names_to="Variable",values_to="Total") %>%
+  group_by(Variable) %>% summarise_counts() %>%
+  mutate(Variable=recode(Variable,gdp_pc="GDP pc (US$)",
+    host_population="Population",total="POC count"))
+```
+
+```{r summary-tables}
+tab(whole_summary,"Total across original records")
+tab(year_summary,"Total by origin scope and year")
+tab(host_summary,"Global totals aggregated by receiving country and year")
+tab(covariate_summary,"Model 2 complete-case sample (rounded to whole units)",digits=0)
+```
+
+## 4. Visualisations
+
+Figure 1 shows unequal global country totals: the median rises from 38,480 in 2020 to 93,032 in 2025. Figure 2 identifies a male-heavy recorded adult population. Other ages are displayed separately. Female and male totals sum to 60,724, leaving 8,302 of the overall 69,026 outside the supplied sex totals, indicating incomplete demographic coverage.
+
+```{r global-distribution, echo=TRUE, fig.width=9.5, fig.height=4.2, fig.cap="Global receiving-country distributions. Left and centre use log scales; right tracks each year's three largest totals."}
+# Figure 1: adapted from Part 2 (global distribution).
+make_box <- function() {
+  ggplot(country_year, aes(factor(Year), Total)) +
+    geom_boxplot(fill = "#AAC7D2", colour = "#284B5B",
+                 outlier.alpha = .3) +
+    stat_summary(aes(group = 1), fun = median,
+                 geom = "line", linetype = 2) +
+    scale_y_log10(labels = scales::label_number(
+      scale_cut = scales::cut_short_scale())) +
+    labs(x = NULL, y = "Recorded persons") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+top3 <- country_year %>%
+  group_by(Year) %>%
+  slice_max(Total, n = 3, with_ties = FALSE) %>%
+  arrange(Year, desc(Total)) %>%
+  mutate(Rank = factor(row_number())) %>%
+  ungroup()
+p1 <- make_box() + labs(title = "A  Full distribution")
+p2 <- make_box() + coord_cartesian(ylim = c(1000, 1000000)) +
+  labs(title = "B  Central range", y = NULL)
+p3 <- ggplot(top3, aes(Year, Total, colour = Rank, group = Rank)) +
+  geom_line() + geom_point() +
+  scale_x_continuous(breaks = 2020:2025) +
+  scale_y_continuous(labels = scales::label_number(
+    scale = 1e-6, suffix = "M")) +
+  labs(title = "C  Three largest totals", x = NULL, y = NULL) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+p1 + p2 + p3
+```
+
+```{r age-pyramid, echo=TRUE, fig.width=7.5, fig.height=4.2, fig.cap="Palestinian-origin age and sex counts in 2025. Other is the source age category; 8,302 are outside the reported sex totals."}
+# Figure 2: adapted from Part 1 (demographic analysis).
+# Keep the original Other category separate from 60+.
+age <- pal %>%
+  filter(Year == 2025) %>%
+  summarise(across(
+    matches("^(Female|Male) (0|5|12|18|60|Other)"), sum)) %>%
+  pivot_longer(everything(), names_to = c("Sex", "Age"),
+               names_pattern = "^(Female|Male) (.*)$",
+               values_to = "Count") %>%
+  mutate(
+    Age = factor(Age, levels = c("0 - 4", "5 - 11", "12 - 17",
+                                "18 - 59", "60+", "Other")),
+    Signed = if_else(Sex == "Female", -Count, Count)
+  )
+ggplot(age, aes(Signed, Age, fill = Sex)) + geom_col() +
+  scale_x_continuous(labels = function(x) scales::comma(abs(x))) +
+  scale_fill_manual(values = c(Female = "#B66942", Male = "#287F8A")) +
+  labs(x = "Recorded persons", y = "Age category")
+```
+
+Figure 3 separates reporting discontinuity from apparent change. Recorded totals fall 52.3% between 2022 and 2023, whereas excluding Egypt from both years produces a 17.0% increase. Egypt's annual counts of approximately 70,000 disappear after 2022. The report documents a downward revision of its Palestinian estimate (UNHCR, 2024, p. 8). Excluding Egypt throughout yields 58.5% growth over 2020–2025, although other coverage changes remain possible.
+
+```{r annual-trends, echo=TRUE, fig.width=8, fig.height=4.2, fig.cap="Palestinian-origin annual totals. Egypt is unreported from 2023 onwards, when the series overlap."}
+# Figure 3: adapted from Part 3 (population trends).
+annual <- pal %>%
+  group_by(Year) %>%
+  summarise(
+    All = sum(Total),
+    `Excluding Egypt` = sum(Total[`Country of Asylum ISO` != "EGY"]),
+    .groups = "drop"
+  )
+long_annual <- annual %>%
+  pivot_longer(-Year, names_to = "Series", values_to = "Total")
+ggplot(long_annual, aes(Year, Total, colour = Series,
+                        linetype = Series)) +
+  geom_line(linewidth = 1) + geom_point(size = 2) +
+  scale_colour_manual(values = c("#287F8A", "#B66942")) +
+  scale_x_continuous(breaks = 2020:2025) +
+  scale_y_continuous(labels = scales::comma,
+                     limits = c(0, 130000)) +
+  labs(x = NULL, y = "Recorded persons",
+       colour = NULL, linetype = NULL)
+```
+
+```{r annual-table}
+tab(mutate(annual, Year = as.character(Year)),
+    "Annual totals with and without Egypt", digits = 0)
+```
+
+Figures 4–5 locate and rank the 2025 records. Belgium leads with 15,142, followed by Greece with 11,470 and Iraq with 7,477. Grey map areas indicate unmatched observations.
+
+```{r geographical-map, echo=TRUE, fig.width=8.5, fig.height=4.5, fig.cap="Palestinian-origin recorded populations in 2025. Grey indicates no matched record. Natural Earth boundaries are illustrative."}
+# Figure 4: adapted from the map in Part 1.
+# Bundled geometry works offline; the fallback matches France/Norway.
+world <- rnaturalearthdata::countries110
+if (!inherits(world, "sf")) world <- sf::st_as_sf(world)
+world$join_iso <- ifelse(world$iso_a3 == "-99",
+                         world$adm0_a3, world$iso_a3)
+map_data <- left_join(world, pal25, by = c("join_iso" = "iso3"))
+ggplot(map_data) +
+  geom_sf(aes(fill = total), colour = "white", linewidth = .12) +
+  scale_fill_viridis_c(
+    option = "magma", direction = -1, trans = "sqrt",
+    limits = c(0, max(pal25$total)),
+    breaks = c(0, 1000, 5000, 15000),
+    na.value = "grey88", labels = scales::comma,
+    guide = guide_colourbar(barwidth = grid::unit(9, "cm"),
+                            barheight = grid::unit(.35, "cm"))
+  ) +
+  coord_sf(ylim = c(-60, 85), expand = FALSE) +
+  labs(fill = "Recorded persons") + theme_void() +
+  theme(legend.position = "bottom")
+```
+
+```{r top-ten, echo=TRUE, fig.width=7.5, fig.height=4.2, fig.cap="Ten largest Palestinian-origin populations recorded in receiving countries in 2025."}
+# Figure 5: adapted from the top-ten chart in Part 1.
+top10 <- pal25 %>%
+  slice_max(total, n = 10) %>%
+  mutate(country = if_else(iso3 == "GBR", "United Kingdom", country))
+ggplot(top10, aes(total, reorder(country, total))) +
+  geom_col(fill = "#287F8A") +
+  geom_text(aes(label = scales::comma(total)),
+            hjust = -.12, size = 3) +
+  scale_x_continuous(labels = scales::comma,
+                     expand = expansion(mult = c(0, .16))) +
+  labs(x = "Recorded persons", y = NULL)
+```
+
+## 5. Models
+
+### a. Motivation behind each model
+
+Model 1 estimates yearly differences using negative-binomial mixed regression: Total depends on categorical Year and a country random intercept. Overdispersed counts motivate NB2; repeated country observations motivate the random intercept. This avoids imposing constant annual growth. Model 2 regresses log(1 + Total) on log GDP per capita and log host population in 2025. It examines economic and population associations while reducing skewness and controlling each predictor for the other.
+
+### b. Can the models be compared?
+
+They provide complementary evidence but cannot be directly ranked by fit. Model 1 uses 469 country-year counts; Model 2 uses 77 countries and a transformed response. Their samples, likelihoods and estimands differ.
+
+### c. Which model is better, and why?
+
+Model 1 is better suited to longitudinal count variation; Model 2 to cross-sectional associations. Their different outcomes and samples prevent a single fit ranking. A direct comparison would require the same observations, response definition and prediction target.
+
+### d. Interpretation in plain English
+
+```{r model1-fit, echo=TRUE}
+# Model 1: adapted from Part 1 (negative-binomial GLMM).
+model_data <- pal %>%
+  mutate(Year = factor(Year, levels = 2020:2025),
+         Country = factor(`Country of Asylum ISO`))
+model1 <- glmmTMB::glmmTMB(
+  Total ~ Year + (1 | Country),
+  family = glmmTMB::nbinom2(link = "log"),
+  data = model_data
+)
+
+# Coefficients and exponentiated 95% Wald intervals
+c1 <- as.data.frame(summary(model1)$coefficients$cond)
+c1$Term <- rownames(c1)
+c1$Ratio <- exp(c1$Estimate)
+c1$Lower <- exp(c1$Estimate - 1.96 * c1$`Std. Error`)
+c1$Upper <- exp(c1$Estimate + 1.96 * c1$`Std. Error`)
+c1$`Pr(>|z|)` <- format.pval(c1$`Pr(>|z|)`, digits = 3, eps = .001)
+tab(c1 %>% select(Term, Estimate, `Std. Error`, `Pr(>|z|)`,
+                  Ratio, Lower, Upper),
+    "Model 1 coefficients and exponentiated 95% Wald intervals",
+    digits = 4)
+```
+
+```{r model1-check, include=FALSE}
+stopifnot(model1$fit$convergence == 0, isTRUE(model1$sdr$pdHess))
+stopifnot(abs(expm1(glmmTMB::fixef(model1)$cond['Year2024'])-.211)<.002,
+          abs(expm1(glmmTMB::fixef(model1)$cond['Year2025'])-.800)<.002)
+```
+
+Relative to 2020, Model 1 estimates 21.1% higher conditional counts in 2024 (p = .042) and 80.0% higher counts in 2025 (p < .001). Differences in 2021–2023 are not statistically significant. The estimates account for country heterogeneity within the observed panel.
+
+```{r model2-fit, echo=TRUE}
+# Model 2: adapted from Part 4 (country of asylum).
+# analysis25 contains the 77 complete country matches shown above.
+model2 <- lm(
+  log1p(total) ~ log(gdp_pc) + log(host_population),
+  data = analysis25
+)
+c2 <- as.data.frame(summary(model2)$coefficients)
+c2$Term <- rownames(c2)
+c2$`Pr(>|t|)` <- format.pval(c2$`Pr(>|t|)`, digits = 3, eps = .001)
+tab(c2 %>% select(Term, everything()),
+    "Model 2 coefficients", digits = 4)
+```
+
+```{r model2-check, include=FALSE}
+stopifnot(abs(coef(model2)[2]-.8402)<.001,
+          abs(coef(model2)[3]-.3375)<.001,
+          abs(summary(model2)$adj.r.squared-.2553)<.001)
+```
+
+Model 2's GDP coefficient is 0.840 (p < .001); population's is 0.338 (p = .012). Holding the other predictor constant, 1% higher GDP per capita corresponds approximately to 0.84% higher Total + 1; population's equivalent association is 0.34%. Adjusted R² is .255, with F(2,74) = 14.03. The pattern links higher income and larger populations with higher recorded counts.
+
+```{r model-results}
+tab(data.frame(Model=c("Model 1","Model 2"),N=c(nobs(model1),nobs(model2)),
+  Measure=c("Random-intercept SD","Adjusted R squared"),
+  Value=c(sqrt(as.numeric(glmmTMB::VarCorr(model1)$cond$Country)),
+    summary(model2)$adj.r.squared)),"Separate model summaries",digits=3)
+```
+
+## 6. Discussion and conclusion
+
+The increase outside Egypt and Model 1's higher 2024–2025 estimates raise questions about sustained reception needs. In Gaza, OCHA reported approximately 658,000 students without formal schooling and 14,000 patients requiring medical evacuation in December 2024 (OCHA, 2024). These reports connect displacement to disrupted life chances. We interpret continued population growth across receiving countries as a reason to plan education, healthcare and family support over several years, alongside emergency assistance.
+
+Europe's prominence and the positive GDP association suggest that reception capacity deserves attention. Globally, low- and middle-income countries hosted 75% of refugees and other people needing international protection in 2023 (UNHCR, 2024). Our 2025 ranking captures a different segment of this protection geography, shaped partly by UNHCR and UNRWA coverage. International responsibility sharing should therefore support both regional providers and countries receiving onward movement. National wealth becomes relevant through the resources available for protection and settlement.
+
+Model 2's adjusted R² of .255 leaves substantial cross-country variation unexplained. Interview research highlights how family reunification, reliable information and social networks shape destination preferences alongside economic circumstances (Crawley & Hagen-Zanker, 2019). This suggests an interpretation in which resources and social connections work together to make settlement feasible. The male-heavy adult profile makes access to family reunion a particularly relevant question for future research. Belgium's lead over Germany also invites closer examination of recognition practices and established communities.
+
+Research on Palestinian secondary displacement identifies legal protection gaps that become acute when conflict forces renewed flight (Erakat, 2014). This connects our geographical dispersion to a longer history of interrupted security. We conclude that concentrated and growing recorded populations call for durable legal protection, accessible family reunion and sustained public services. Future comparisons should examine how these arrangements translate host-country resources into everyday security, using stable country panels and evidence on refugees' experiences.
+
+<!-- BODY_END -->
+
+**Word count: 1,092.** Including narrative and section headings; excluding title, in-text citations, references, code and output.
+
+## References
+
+Crawley, H., & Hagen-Zanker, J. (2019). Deciding where to go: Policies, people and perceptions shaping destination preferences. *International Migration, 57*(1), 20–35. https://doi.org/10.1111/imig.12537
+
+Erakat, N. (2014). Palestinian refugees and the Syrian uprising: Filling the protection gap during secondary forced displacement. *International Journal of Refugee Law, 26*(4), 581–621. https://doi.org/10.1093/ijrl/eeu047
+
+United Nations High Commissioner for Refugees. (2024). *Global trends: Forced displacement in 2023*. https://www.unhcr.org/sites/default/files/2024-06/global-trends-report-2023.pdf
+
+United Nations High Commissioner for Refugees. (n.d.). *Refugee Data Finder* [Data set; supplied 2020–2025 demographic extract and accompanying footnotes]. https://www.unhcr.org/refugee-statistics/
+
+United Nations Office for the Coordination of Humanitarian Affairs. (2024, December 24). *Reported impact snapshot: Gaza Strip*. https://www.ochaopt.org/sites/default/files/Gaza_Reported_Impact_Snapshot_24_December_2024.pdf
+
+United Nations Relief and Works Agency for Palestine Refugees in the Near East. (n.d.). *Where we work*. Retrieved November 12, 2026, from https://www.unrwa.org/where-we-work
+
+World Bank. (n.d.-a). *GDP per capita (current US$)* [Data set]. World Development Indicators. Retrieved November 12, 2026, from https://data.worldbank.org/indicator/NY.GDP.PCAP.CD
+
+World Bank. (n.d.-b). *Population, total* [Data set]. World Development Indicators. Retrieved November 12, 2026, from https://data.worldbank.org/indicator/SP.POP.TOTL
+
+<!-- REPOSITORY_NOTE_START -->
+
+## GitHub Repository
+
+The four R Markdown files containing group members' visualisation code, the consolidated R Markdown report, and the PDF have been uploaded to GitHub:
+
+[https://github.com/Costawang/NMC5344-Group-Project-Group7](https://github.com/Costawang/NMC5344-Group-Project-Group7)
+
+<!-- REPOSITORY_NOTE_END -->
+
+```{r reproducibility, include=FALSE}
+# Save checks locally when requested; these do not alter the report data.
+# sessionInfo()
+# summary(model1)
+# summary(model2)
+# Plot residual diagnostics interactively:
+# par(mfrow=c(2,2)); plot(model2)
+# Egypt exclusion is descriptive, not proof of a stable remaining panel.
+```
