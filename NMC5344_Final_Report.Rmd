@@ -29,7 +29,8 @@ params:
 ```{r setup, include=FALSE}
 # Install dependencies once outside knitting if necessary:
 # install.packages(c("rmarkdown", "knitr", "dplyr", "tidyr", "ggplot2",
-#   "scales", "patchwork", "glmmTMB", "sf", "rnaturalearthdata"))
+#   "scales", "patchwork", "glmmTMB", "sf", "rnaturalearthdata",
+#   "tidyverse", "rnaturalearth"))
 library(dplyr)
 library(tidyr)
 library(ggplot2)
@@ -162,36 +163,135 @@ tab(covariate_summary,"Model 2 complete-case sample (rounded to whole units)",di
 
 Figure 1 shows unequal global country totals: the median rises from 38,480 in 2020 to 93,032 in 2025. Figure 2 identifies a male-heavy recorded adult population. Other ages are displayed separately. Female and male totals sum to 60,724, leaving 8,302 of the overall 69,026 outside the supplied sex totals, indicating incomplete demographic coverage.
 
-```{r global-distribution, echo=TRUE, fig.width=9.5, fig.height=4.2, fig.cap="Global receiving-country distributions. Left and centre use log scales; right tracks each year's three largest totals."}
-# Figure 1: adapted from Part 2 (global distribution).
-make_box <- function() {
-  ggplot(country_year, aes(factor(Year), Total)) +
-    geom_boxplot(fill = "#AAC7D2", colour = "#284B5B",
-                 outlier.alpha = .3) +
-    stat_summary(aes(group = 1), fun = median,
-                 geom = "line", linetype = 2) +
-    scale_y_log10(labels = scales::label_number(
-      scale_cut = scales::cut_short_scale())) +
-    labs(x = NULL, y = "Recorded persons") +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```{r part2-data, echo=TRUE}
+library(tidyverse)
+library(patchwork)
+library(scales)
+
+df <- read_csv(params$data_file, show_col_types = FALSE)
+
+country_year <- df %>%
+  group_by(Year, `Country of Asylum`) %>%
+  summarise(Total_POC = sum(Total, na.rm = TRUE), .groups = "drop") %>%
+  filter(Total_POC > 0)
+```
+
+```{r part2-boxplot-style, echo=TRUE}
+main_color <- "#456477"
+fill_color <- "#A9C4D6"
+
+base_theme <- theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    plot.subtitle = element_text(size = 9, color = "grey40"),
+    axis.title.x = element_text(size = 9, margin = margin(t = 8)),
+    axis.title.y = element_text(size = 9, margin = margin(r = 8)),
+    axis.text = element_text(size = 8.5),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "grey83", linewidth = 0.35),
+    panel.grid.minor.y = element_line(color = "grey91", linewidth = 0.25),
+    panel.grid.minor.x = element_blank(),
+    plot.margin = margin(12, 12, 12, 12)
+  )
+
+make_boxplot <- function() {
+  ggplot(country_year, aes(x = factor(Year), y = Total_POC)) +
+    geom_boxplot(width = 0.55, fill = fill_color, color = main_color,
+                 linewidth = 0.55, outlier.alpha = 0.22, outlier.size = 0.9) +
+    stat_summary(aes(group = 1), fun = median, geom = "line",
+                 linetype = "dashed", color = main_color, linewidth = 0.7) +
+    stat_summary(fun = median, geom = "point", color = main_color, size = 2) +
+    labs(x = "Year", y = "Persons of Concern (log scale)") +
+    base_theme
 }
-top3 <- country_year %>%
+```
+
+```{r part2-distribution-panels, echo=TRUE}
+# A1: complete distribution
+p1 <- make_boxplot() +
+  scale_y_log10(breaks = 10^(0:9),
+                labels = label_number(scale_cut = cut_short_scale())) +
+  labs(title = "A1 | Full Distribution", subtitle = "Including extreme values")
+
+# A2: zoomed central range, with more labeled ticks
+p2 <- make_boxplot() +
+  scale_y_log10(
+    breaks = c(1000, 2000, 5000, 10000, 20000, 50000,
+               100000, 200000, 500000, 1000000),
+    labels = c("1K", "2K", "5K", "10K", "20K", "50K",
+               "100K", "200K", "500K", "1M"),
+    minor_breaks = as.vector(outer(1:9, 10^(3:5), "*"))
+  ) +
+  coord_cartesian(ylim = c(1000, 1000000), expand = FALSE) +
+  labs(title = "A2 | Central Distribution",
+       subtitle = "Magnified view: 1K–1M")
+```
+
+```{r part2-extremes, echo=TRUE}
+# A3: top three annual country-level totals (rank, not fixed countries)
+top3_yearly <- country_year %>%
   group_by(Year) %>%
-  slice_max(Total, n = 3, with_ties = FALSE) %>%
-  arrange(Year, desc(Total)) %>%
-  mutate(Rank = factor(row_number())) %>%
+  arrange(desc(Total_POC), .by_group = TRUE) %>%
+  slice_head(n = 3) %>%
+  mutate(Rank = factor(row_number(), levels = 1:3,
+                       labels = c("1st", "2nd", "3rd"))) %>%
   ungroup()
-p1 <- make_box() + labs(title = "A  Full distribution")
-p2 <- make_box() + coord_cartesian(ylim = c(1000, 1000000)) +
-  labs(title = "B  Central range", y = NULL)
-p3 <- ggplot(top3, aes(Year, Total, colour = Rank, group = Rank)) +
-  geom_line() + geom_point() +
+
+p3 <- ggplot(top3_yearly,
+             aes(x = Year, y = Total_POC, group = Rank,
+                 color = Rank, linetype = Rank)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.8) +
+  scale_color_manual(values = c("1st" = "#456477",
+                                "2nd" = "#8EAABD",
+                                "3rd" = "#A9C4D6")) +
+  scale_linetype_manual(values = c("1st" = "solid",
+                                   "2nd" = "dashed",
+                                   "3rd" = "dotted")) +
   scale_x_continuous(breaks = 2020:2025) +
-  scale_y_continuous(labels = scales::label_number(
-    scale = 1e-6, suffix = "M")) +
-  labs(title = "C  Three largest totals", x = NULL, y = NULL) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-p1 + p2 + p3
+  scale_y_continuous(
+    limits = c(0, NA),
+    breaks = seq(0, 30000000, 5000000),
+    minor_breaks = seq(0, 30000000, 2500000),
+    labels = label_number(scale = 1e-6, suffix = "M"),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  labs(title = "A3 | Extreme Values",
+       subtitle = "Top three country totals each year",
+       x = "Year", y = "Persons of Concern",
+       color = "Annual Rank", linetype = "Annual Rank") +
+  base_theme +
+  theme(legend.position = "bottom",
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8),
+        legend.key.width = grid::unit(0.8, "cm"))
+```
+
+```{r global-distribution, echo=TRUE, fig.width=9.5, fig.height=6, fig.cap="Global receiving-country distributions. Left and centre use log scales; right tracks each year's three largest totals."}
+figure_A <- (p1 | p2 | p3) +
+  plot_layout(widths = c(1.1, 1, 1)) +
+  plot_annotation(
+    title = "Global Distribution of Persons of Concern, 2020–2025",
+    subtitle =
+      "Overall distribution, central patterns, and extreme high values",
+    caption = paste(
+      "Source: Provided demographics dataset.",
+      "Country-level totals aggregated annually.",
+      "A1–A2: logarithmic scales; A3: annual top-three country totals."
+    ),
+    theme = theme(
+      plot.title = element_text(face = "bold", size = 17,
+                                margin = margin(b = 7)),
+      plot.subtitle = element_text(size = 10, color = "grey40",
+                                   margin = margin(b = 12)),
+      plot.caption = element_text(size = 8, color = "grey45",
+                                  hjust = 0, margin = margin(t = 12)),
+      plot.background = element_rect(fill = "white", color = NA),
+      plot.margin = margin(18, 20, 15, 20)
+    )
+  )
+
+print(figure_A)
 ```
 
 ```{r age-pyramid, echo=TRUE, fig.width=7.5, fig.height=4.2, fig.cap="Palestinian-origin age and sex counts in 2025. Other is the source age category; 8,302 are outside the reported sex totals."}
@@ -215,32 +315,89 @@ ggplot(age, aes(Signed, Age, fill = Sex)) + geom_col() +
   labs(x = "Recorded persons", y = "Age category")
 ```
 
-Figure 3 separates reporting discontinuity from apparent change. Recorded totals fall 52.3% between 2022 and 2023, whereas excluding Egypt from both years produces a 17.0% increase. Egypt's annual counts of approximately 70,000 disappear after 2022. The report documents a downward revision of its Palestinian estimate (UNHCR, 2024, p. 8). Excluding Egypt throughout yields 58.5% growth over 2020–2025, although other coverage changes remain possible.
+Figure 3 compares annual totals for Palestinian refugees with and without Egypt. From 2022 to 2023, the total across all recorded places of asylum fell by 52.3%, while the total excluding Egypt rose by 17.0%. The dataset recorded about 70,000 Palestinian refugees in Egypt each year from 2020 to 2022, but contained no corresponding figures for 2023 to 2025. UNHCR (2024) reported that the estimated number of Palestinian refugees under its mandate in Egypt had been revised downward. With Egypt excluded throughout, the recorded total rose by 58.5% from 2020 to 2025.
 
-```{r annual-trends, echo=TRUE, fig.width=8, fig.height=4.2, fig.cap="Palestinian-origin annual totals. Egypt is unreported from 2023 onwards, when the series overlap."}
-# Figure 3: adapted from Part 3 (population trends).
-annual <- pal %>%
-  group_by(Year) %>%
-  summarise(
-    All = sum(Total),
-    `Excluding Egypt` = sum(Total[`Country of Asylum ISO` != "EGY"]),
-    .groups = "drop"
-  )
-long_annual <- annual %>%
-  pivot_longer(-Year, names_to = "Series", values_to = "Total")
-ggplot(long_annual, aes(Year, Total, colour = Series,
-                        linetype = Series)) +
-  geom_line(linewidth = 1) + geom_point(size = 2) +
-  scale_colour_manual(values = c("#287F8A", "#B66942")) +
-  scale_x_continuous(breaks = 2020:2025) +
-  scale_y_continuous(labels = scales::comma,
-                     limits = c(0, 130000)) +
-  labs(x = NULL, y = "Recorded persons",
-       colour = NULL, linetype = NULL)
+```{r part3-annual-totals, echo=TRUE}
+demographics <- read.csv(params$data_file, check.names = FALSE)
+palestine_trends <- subset(
+  demographics, `Country of Origin ISO` == "PSE" & Year %in% 2020:2025,
+  select = c("Year", "Country of Asylum ISO", "Total")
+)
+names(palestine_trends) <- c("year", "asylum_iso", "total")
+stopifnot(!anyNA(palestine_trends),
+          !anyDuplicated(palestine_trends[c("year", "asylum_iso")]))
+
+annual <- aggregate(total ~ year, palestine_trends, sum)
+annual_without_egypt <- aggregate(
+  total ~ year, subset(palestine_trends, asylum_iso != "EGY"), sum
+)
+stopifnot(identical(annual$year, 2020:2025),
+          identical(annual_without_egypt$year, 2020:2025))
+
+ink <- "#172E35"
+teal <- "#007C78"
+orange <- "#A85222"
+muted <- "#4C6269"
+```
+
+```{r part3-series, echo=TRUE}
+series_labels <- c(
+  "Total across all reported places of asylum",
+  "Total excluding Egypt as a place of asylum (both lines overlap in 2023–2025)"
+)
+comparison <- rbind(
+  transform(annual, series = series_labels[1]),
+  transform(annual_without_egypt, series = series_labels[2])
+)
+comparison$series <- factor(comparison$series, levels = series_labels)
+comparison_points <- unique(comparison[c("year", "total")])
+```
+
+```{r annual-trends, echo=TRUE, fig.width=9.5, fig.height=5.7, dpi=240, fig.cap="Palestinian-origin annual totals. Egypt is unreported from 2023 onwards, when the series overlap."}
+trend_comparison <- ggplot(comparison, aes(year, total)) +
+  geom_line(aes(color = series, linetype = series), linewidth = 1.3) +
+  geom_point(data = comparison_points, size = 3.15, shape = 21,
+             stroke = 0.9, color = ink, fill = "white") +
+  geom_text(data = comparison_points,
+            aes(label = scales::comma(total),
+                vjust = ifelse(year == 2023, 2.15, -1.15)),
+            size = 3.85, color = ink, fontface = "bold") +
+  scale_color_manual(
+    name = NULL, values = setNames(c(teal, orange), series_labels)) +
+  scale_linetype_manual(name = NULL,
+    values = setNames(c("solid", "longdash"), series_labels)) +
+  scale_x_continuous(breaks = annual$year, expand = expansion(add = 0.32)) +
+  scale_y_continuous(breaks = seq(0, 125000, 25000), labels = scales::comma,
+                     limits = c(0, 138000), expand = expansion(mult = 0)) +
+  labs(title = "Population Trends of Refugees from Palestine (2020–2025)",
+       x = NULL, y = "Number of refugees") +
+  theme_minimal(base_size = 13) +
+  theme(plot.background = element_rect(fill = "white", color = NA),
+        plot.title.position = "plot",
+        plot.title = element_text(size = 20, face = "bold",
+                                  color = ink, margin = margin(b = 6)),
+        panel.grid.major.y = element_line(color = "#DBE5E7",
+                                          linewidth = 0.45),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text = element_text(color = muted),
+        axis.text.x = element_text(margin = margin(t = 8)),
+        axis.title.y = element_text(color = ink,
+                                    margin = margin(r = 11)),
+        plot.margin = margin(22, 26, 20, 22),
+        legend.position = "bottom", legend.direction = "vertical",
+        legend.justification = "left",
+        legend.key.width = grid::unit(64, "pt"),
+        legend.key.height = grid::unit(17, "pt"),
+        legend.text = element_text(size = 11, color = ink))
+
+trend_comparison
 ```
 
 ```{r annual-table}
-tab(mutate(annual, Year = as.character(Year)),
+annual_summary <- merge(annual, annual_without_egypt, by = "year")
+names(annual_summary) <- c("Year", "All", "Excluding Egypt")
+tab(mutate(annual_summary, Year = as.character(Year)),
     "Annual totals with and without Egypt", digits = 0)
 ```
 
@@ -372,7 +529,7 @@ Research on Palestinian secondary displacement identifies legal protection gaps 
 
 <!-- BODY_END -->
 
-**Word count: 1,092.** Including narrative and section headings; excluding title, in-text citations, references, code and output.
+**Word count: 1,093.** Including main text and section headings; excluding title, in-text citations, references, code, output and GitHub repository note.
 
 ## References
 
